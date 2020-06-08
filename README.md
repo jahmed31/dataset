@@ -1,5 +1,7 @@
 # Dataset
 This project is in Django. Two main components in this application
+1. migration for csv data in database
+2. api endpoint 
 
 ## Installation
 ```bash
