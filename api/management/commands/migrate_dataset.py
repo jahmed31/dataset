@@ -9,7 +9,11 @@ class Command(BaseCommand):
     """
     Class to add dataset csv in to django model
     """
-    help = 'Adding the dataset csv in database'
+    help = """
+    Populates DataSet model using the provided csv file. Columns inside csv
+    should have following order.
+    date,channel,country,os,impressions,clicks,installs,spend,revenue
+    """
 
     def add_arguments(self, parser):
         """
@@ -25,27 +29,24 @@ class Command(BaseCommand):
         :param args: empty
         :param options: command line argument(s) (dict)
         """
-        dataset_objs = DataSet.objects.all()
-        if dataset_objs:
-            dataset_objs.delete()
+
+        # delete all the existing records to refresh the database
+        DataSet.objects.all().delete()
+        # getting dataset.csv
         dataset_csv = options['csv_path'][0]
+
         try:
             with open(dataset_csv, 'r') as csv_file:
                 csv_reader = csv.DictReader(csv_file)
+                datasets = []
                 for row in csv_reader:
-                    dataset_obj = DataSet()
-                    dataset_obj.date = self.format_date(row['date'])
-                    dataset_obj.channel = row['channel']
-                    dataset_obj.country = row['country']
-                    dataset_obj.os = row['os']
-                    dataset_obj.impressions = row['impressions']
-                    dataset_obj.clicks = row['clicks']
-                    dataset_obj.installs = row['installs']
-                    dataset_obj.spend = row['spend']
-                    dataset_obj.revenue = row['revenue']
-                    dataset_obj.save()
-                    message = f'Successfully Inserted {row}'
-                    self.stdout.write(self.style.SUCCESS(message))
+                    row['date'] = self.format_date(row['date'])
+                    datasets.append(DataSet(**row))
+                # doing bulk insertion in database
+                DataSet.objects.bulk_create(datasets)
+                message = f'Successfully populated DataSet csv'
+                # on successful insertion message display on command line
+                self.stdout.write(self.style.SUCCESS(message))
         except IOError:
             raise CommandError(f'Dataset file {dataset_csv} does not exist')
         except KeyError:

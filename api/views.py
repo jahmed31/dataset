@@ -1,9 +1,13 @@
-import datetime
-
 from .models import DataSet
-from django.db.models import Sum, F, FloatField
+from django.db.models import (
+    Sum,
+    F,
+    FloatField
+)
 from django.http import JsonResponse
 from django.views.generic import ListView
+
+from api import forms
 
 
 class SearchDataSet(ListView):
@@ -17,80 +21,60 @@ class SearchDataSet(ListView):
         :param request: http request object (request obj)
         :return: json response list of dictionary (json)
         """
-        db_columns = ['channel', 'country', 'os', 'impressions', 'clicks'
-                      'installs', 'spend', 'revenue', 'date']
+        form = forms.SearchForm(data=request.GET)
+        if not form.is_valid():
+            return JsonResponse(
+                status=400,
+                data={'errors': form.errors},
+                safe=False
+            )
+
         model_filters = dict()
         select_list = set()
-        order_by = ''
         # date from filter
-        if request.GET.get('date-from'):
-            date_from = request.GET['date-from']
-            model_filters['date__gte'] = self.to_date_obj(date_from)
-            select_list.add('date')
+        if form.cleaned_data.get('date_from'):
+            model_filters['date__gte'] = form.cleaned_data['date_from']
         # date to filter
-        if request.GET.get('date-to'):
-            date_to = request.GET['date-to']
-            model_filters['date__lte'] = self.to_date_obj(date_to)
-            select_list.add('date')
+        if form.cleaned_data.get('date_to'):
+            model_filters['date__lte'] = form.cleaned_data['date_to']
         # operating system filter
-        if 'operating-system' in request.GET:
-            os = request.GET.getlist('operating-system')
-            model_filters['os__in'] = os
-            select_list.add('os')
+        if form.cleaned_data.get('os'):
+            model_filters['os__in'] = form.cleaned_data['os']
         # country filter
-        if 'countries' in request.GET:
-            model_filters['country__in'] = request.GET.getlist('countries')
-            select_list.add('country')
+        if form.cleaned_data.get('country'):
+            model_filters['country__in'] = form.cleaned_data['country']
         # channel filter
-        if 'channel' in request.GET:
-            model_filters['channel__in'] = request.GET.getlist('channel')
-            select_list.add('channel')
+        if form.cleaned_data.get('channel'):
+            model_filters['channel__in'] = form.cleaned_data['channel']
+        # group by column filter
+        if form.cleaned_data.get('group_by'):
+            select_list = form.cleaned_data['group_by']
+        # getting records from database
+        queryset = DataSet.objects.values(*select_list).annotate(
+            impressions=Sum(F('impressions')),
+            clicks=Sum(F('clicks')),
+            revenue=Sum(F('revenue')),
+            spends=Sum(F('spend'), output_field=FloatField()),
+            CPI=(
+                Sum(F('spend'), output_field=FloatField())
+                /
+                Sum(F('installs'), output_field=FloatField())
+            )
+        ).filter(**model_filters)
         # sorted column name
-        if request.GET.get('sort'):
-            order_by = request.GET.get('sort')
-            if order_by not in db_columns:
-                message = f'Column {order_by} not exists'
-                return JsonResponse(status=401, message=message, data=[])
-        # sorted order
-        if (request.GET.get('order') and
-                request.GET.get('order') == 'descending'):
-            order_by = '-' + order_by
-        select_list = list(select_list)
+        if form.cleaned_data.get('sort'):
+            order_by = form.cleaned_data['sort']
+            if form.cleaned_data.get('order', 'asc') == 'desc':
+                order_by = '-' + order_by
+            # sorting data ascending/descending
+            queryset = queryset.order_by(order_by)
 
         try:
-            dataset_objs = DataSet.objects.values(
-                *select_list
-            ).annotate(CPI=Sum(F('spend'), output_field=FloatField()) /
-            Sum(F('installs'), output_field=FloatField())).filter(
-                **model_filters
-            ).order_by(order_by)
-            if 'date' in select_list:
-                dataset_objs = self.format_date(dataset_objs)
-            total_count = dataset_objs.count()
-            response = {'status': 200, 'data': list(dataset_objs),
+            total_count = queryset.count()
+            response = {'status': 200, 'data': list(queryset),
                         'total': total_count, 'message': 'Success'}
         except Exception as exe:
             response = {'status': 406, 'data': [], 'message': 'Bad Request',
                         'error': str(exe)}
 
-        return JsonResponse(response)
-
-    @staticmethod
-    def format_date(data):
-        """
-        function to format date
-        :param data: datetime object (obj)
-        :return: list of queryset (queryset)
-        """
-        for row in data:
-            row['date'] = datetime.datetime.strftime(row['date'], '%Y-%m-%d')
-        return data
-
-    @staticmethod
-    def to_date_obj(date):
-        """
-        function to convert string to date object
-        :param date: date (str)
-        :return: list of date object (list)
-        """
-        return datetime.datetime.strptime(date, '%Y-%m-%d').date()
+        return JsonResponse(response, safe=False)
